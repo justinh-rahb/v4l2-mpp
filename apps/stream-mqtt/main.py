@@ -1,0 +1,458 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import json
+import signal
+import socket
+import subprocess
+import threading
+import argparse
+import time
+from datetime import datetime
+from pathlib import Path
+
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    print("Error: paho-mqtt not installed. Run: pip install paho-mqtt")
+    sys.exit(1)
+
+global_lock = threading.Lock()
+snapshot_interval = -1
+
+args = None
+client = None
+
+def log(msg):
+    ts = time.strftime('%H:%M:%S')
+    print(f"[{ts}] {msg}", flush=True)
+
+def timestamp_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def date_index():
+    return datetime.now().strftime("%Y%m%d%H%M%S")
+
+def send_response(request_id, result):
+    resp = {"jsonrpc": "2.0", "id": request_id, "result": result}
+    client.publish(args.response_topic, json.dumps(resp))
+    log(f"Response: {resp}")
+
+def send_error(request_id, code, message):
+    resp = {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+    client.publish(args.response_topic, json.dumps(resp))
+    log(f"Error: {resp}")
+
+def send_notification(method, params):
+    notif = {"jsonrpc": "2.0", "method": method, "params": params}
+    client.publish(args.notification_topic, json.dumps(notif))
+    log(f"Notification: {notif}")
+
+def read_socket(sock_path, chunk_size=65536):
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(sock_path)
+    try:
+        chunks = []
+        while True:
+            chunk = sock.recv(chunk_size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b''.join(chunks)
+    finally:
+        sock.close()
+
+def take_snapshot(filepath):
+    if not args.jpeg_sock:
+        log(f"No snapshot socket configured")
+        return False
+    try:
+        data = read_socket(args.jpeg_sock)
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = filepath + ".tmp"
+        with open(tmp_path, 'wb') as f:
+            f.write(data)
+        os.replace(tmp_path, filepath)
+        log(f"Snapshot saved: {filepath} ({len(data)} bytes)")
+        return True
+    except Exception as e:
+        log(f"Snapshot failed: {e}")
+        return False
+
+def handle_start_timelapse(request_id, params):
+    with global_lock:
+        current_link = Path(args.timelapse_dir) / "current"
+        if current_link.exists() or current_link.is_symlink():
+            if args.auto_close_timelapses:
+                log("Finishing previous timelapse before starting new one")
+                finish_timelapse()
+            else:
+                send_error(request_id, -1, "Timelapse already active")
+                return
+
+        idx = date_index()
+        tl_dir = Path(args.timelapse_dir) / idx
+        tl_dir.mkdir(parents=True, exist_ok=True)
+
+        config = {
+            "frame_rate": params.get("frame_rate", 24),
+            "gcode_name": params.get("gcode_name", "unknown"),
+            "gcode_path": params.get("gcode_path", ""),
+            "mode": params.get("mode", "classic"),
+        }
+        with open(tl_dir / "config.json", "w") as f:
+            json.dump(config, f, indent=4)
+
+        with open(tl_dir / "state", "w") as f:
+            f.write("ACTIVATED")
+
+        current_link.symlink_to(idx)
+
+    send_response(request_id, {"state": "success"})
+    send_notification("notify_camera_status_change", [{"timelapse": True, "timestamp": timestamp_str()}])
+
+def publish_timelapse(gcode_name, date_index, video_path, thumb_path):
+    if not args.publish_dir:
+        return
+    publish_dir = Path(args.publish_dir)
+    publish_dir.mkdir(parents=True, exist_ok=True)
+
+    base_name = f"{gcode_name}_{date_index}"
+    video_link = publish_dir / f"{base_name}.mp4"
+    thumb_link = publish_dir / f"{base_name}.jpg"
+
+    for link in [video_link, thumb_link]:
+        if link.exists() or link.is_symlink():
+            link.unlink()
+
+    if video_path and Path(video_path).exists():
+        video_link.symlink_to(video_path)
+        log(f"Published: {video_link}")
+
+    if thumb_path and Path(thumb_path).exists():
+        thumb_link.symlink_to(thumb_path)
+        log(f"Published: {thumb_link}")
+
+def add_instance_to_timelapse_json(instance):
+    timelapse_json_path = Path(args.timelapse_dir) / "timelapse.json"
+    timelapse_data = {"count": 0, "instances": []}
+    if timelapse_json_path.exists():
+        try:
+            with open(timelapse_json_path, "r") as f:
+                timelapse_data = json.load(f)
+        except Exception:
+            pass
+
+    timelapse_data["instances"] = [i for i in timelapse_data.get("instances", []) if i.get("date_index") != instance.get("date_index")]
+    timelapse_data["instances"].append(instance)
+    timelapse_data["count"] = len(timelapse_data["instances"])
+
+    with open(timelapse_json_path, "w") as f:
+        json.dump(timelapse_data, f, indent=4)
+
+def finish_timelapse():
+    current_link = Path(args.timelapse_dir) / "current"
+    if not current_link.exists():
+        return False
+    if not current_link.is_symlink():
+        return False
+
+    read_link = current_link.resolve()
+    current_link.unlink()
+
+    threading.Thread(target=generate_video, args=(read_link,), daemon=True).start()
+    return True
+
+def handle_stop_timelapse(request_id, params):
+    with global_lock:
+        if finish_timelapse():
+            send_response(request_id, {"state": "success"})
+            send_notification("notify_camera_status_change", [{"timelapse": False, "timestamp": timestamp_str()}])
+        else:
+            send_error(request_id, -1, "No active timelapse")
+
+def generate_video(tl_dir):
+    # Load config
+    config_path = tl_dir / "config.json"
+    if not config_path.exists():
+        log(f"No config found in {tl_dir}, skipping video generation")
+        return
+    with open(config_path, "r") as f:
+        config = json.load(f)
+
+    # Get frame count
+    frame_count = 0
+    try:
+        with open(tl_dir / "indexNext", "r") as f:
+            frame_count = int(f.read().strip())
+    except Exception as e:
+        log(f"Failed to read frame count: {e}")
+
+    # Get video parameters
+    frame_rate = config.get("frame_rate", 24)
+    mode = config.get("mode", "classic")
+    video_name = f"timelapse_f{frame_count}_r{frame_rate}_{mode}.mp4"
+    video_path = tl_dir / video_name
+
+    log(f"Generating video: {video_path}")
+
+    send_notification("notify_camera_generate_video_progress", [{"percent": 0, "state": "generating"}])
+
+    # Generate video using ffmpeg
+    try:
+        input_pattern = str(tl_dir / "%d.jpg")
+        cmd = [
+            "ffmpeg", "-y",
+            "-framerate", str(frame_rate),
+            "-i", input_pattern,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-preset", "fast",
+            str(video_path)
+        ]
+        log(f"Running: {' '.join(cmd)}")
+        with open(tl_dir / "gen_video.log", "w") as logf:
+            result = subprocess.run(cmd, stdout=logf, stderr=subprocess.STDOUT, timeout=300)
+
+        if result.returncode != 0:
+            log(f"ffmpeg failed with code {result.returncode}")
+    except Exception as e:
+        log(f"Video generation failed: {e}")
+
+    send_notification("notify_camera_generate_video_progress", [{"percent": 60, "state": "generating"}])
+
+    # Create thumbnail
+    thumb_path = tl_dir / "thumbnail.jpg"
+    last_frame = tl_dir / f"{frame_count - 1}.jpg"
+    if last_frame.exists():
+        try:
+            cmd = ["ffmpeg", "-y", "-i", str(last_frame), "-vf", "scale=320:-1", str(thumb_path)]
+            with open(tl_dir / "gen_thumbnail.log", "w") as logf:
+                subprocess.run(cmd, stdout=logf, stderr=subprocess.STDOUT, timeout=30)
+        except Exception as e:
+            log(f"Thumbnail generation failed: {e}")
+
+    send_notification("notify_camera_generate_video_progress", [{"percent": 80, "state": "generating"}])
+
+    # Add instance to timelapse.json
+    duration_secs = frame_count / max(frame_rate, 1)
+    duration_str = f"{int(duration_secs // 60):02d}:{int(duration_secs % 60):02d}"
+    add_instance_to_timelapse_json({
+        "date_index": tl_dir.name,
+        "gcode_name": config.get("gcode_name", ""),
+        "gcode_path": config.get("gcode_path", ""),
+        "generate_date": datetime.now().strftime("%Y-%m-%d"),
+        "thumbnail_path": str(thumb_path) if thumb_path.exists() else "",
+        "timelapse_dir": str(tl_dir),
+        "video_duration": duration_str,
+        "video_path": str(video_path) if video_path.exists() else "",
+    })
+
+    publish_timelapse(config.get("gcode_name", ""), tl_dir.name, str(video_path), str(thumb_path))
+
+    # Mark as finished
+    with open(tl_dir / "state", "w") as f:
+        f.write("FINISHED")
+
+    send_notification("notify_camera_generate_video_progress", [{"percent": 80, "state": "generating"}])
+
+    # Remove jpg (only keep video and thumbnail)
+    for frame_idx in range(frame_count):
+        jpg_file = tl_dir / f"{frame_idx}.jpg"
+        try:
+            jpg_file.unlink()
+        except Exception as e:
+            log(f"Failed to remove {jpg_file}: {e}")
+
+    # Send completion notification
+    send_notification("notify_camera_generate_video_completed", [])
+    log(f"Video generation completed: {video_path}")
+
+def finish_all_timelapses():
+    for tl_dir in Path(args.timelapse_dir).iterdir():
+        if not tl_dir.is_dir():
+            continue
+
+        state_file = tl_dir / "state"
+        if not state_file.exists():
+            continue
+        with open(state_file, "r") as f:
+            state = f.read().strip()
+
+        if state != "ACTIVATED":
+            continue
+
+        log(f"Finishing timelapse in {tl_dir}")
+        generate_video(tl_dir)
+
+def handle_take_photo(request_id, params):
+    filepath = params.get("filepath")
+    index_next = None
+    frame_num = None
+    reason = params.get("reason", "manual")
+
+    if reason == "printing":
+        current_link = Path(args.timelapse_dir) / "current"
+        if not current_link.exists() or not current_link.is_symlink():
+            send_error(request_id, -1, "No active timelapse for printing snapshot")
+            return
+
+        try:
+            index_next = str(current_link / "indexNext")
+            with open(index_next, "r") as f:
+                frame_num = int(f.read().strip())
+        except Exception as e:
+            frame_num = 0
+        filepath = str(current_link / f"{frame_num}.jpg")
+
+    if not filepath:
+        filepath = "/tmp/snapshot.jpg"
+
+    if not take_snapshot(filepath):
+        send_error(request_id, -1, "Failed to take photo")
+        return
+
+    send_response(request_id, {"state": "success"})
+
+    if frame_num is not None:
+        try:
+            with open(index_next, "w") as f:
+                f.write(str(frame_num + 1))
+        except Exception as e:
+            log(f"Failed to update indexNext: {e}")
+
+def snapshot_interval_loop(filepath):
+    log(f"Snapshot interval loop started: filepath={filepath}")
+
+    while True:
+        if snapshot_interval < 0:
+            time.sleep(0.5)
+            continue
+
+        interval = min(max(snapshot_interval, 0.5), 2.0)
+        time.sleep(interval)
+
+        try:
+            Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+            take_snapshot(filepath)
+        except Exception as e:
+            log(f"Snapshot interval error: {e}")
+
+def ensure_monitor_symlink():
+    if not args.publish_dir:
+        return
+
+    monitor_path = Path(args.publish_dir) / "monitor.jpg"
+    try:
+        if monitor_path.is_symlink():
+            if monitor_path.resolve() == Path(args.monitor_output):
+                return
+            monitor_path.unlink()
+        monitor_path.symlink_to(args.monitor_output)
+        log(f"Monitor symlink created: {monitor_path} -> {args.monitor_output}")
+    except Exception as e:
+        log(f"Failed to create monitor symlink: {e}")
+
+def handle_start_monitor(request_id, params):
+    global snapshot_interval
+    domain = params.get("domain", "lan")
+    snapshot_interval = params.get("interval", 1)
+
+    ensure_monitor_symlink()
+
+    send_response(request_id, {"state": "success", "url": "/files/camera/monitor.jpg"})
+    send_notification("notify_camera_status_change", [{"monitor_domain": domain, "monitoring": True, "timestamp": timestamp_str()}])
+
+def handle_stop_monitor(request_id, params):
+    global snapshot_interval
+    domain = params.get("domain", "lan")
+    snapshot_interval = -1
+    send_response(request_id, {"state": "success"})
+    send_notification("notify_camera_status_change", [{"monitor_domain": domain, "monitoring": False, "timestamp": timestamp_str()}])
+
+METHODS = {
+    "camera.start_timelapse": handle_start_timelapse,
+    "camera.stop_timelapse": handle_stop_timelapse,
+    "camera.start_monitor": handle_start_monitor,
+    "camera.stop_monitor": handle_stop_monitor,
+    "camera.take_a_photo": handle_take_photo,
+}
+
+def on_connect(c, userdata, flags, rc):
+    if rc == 0:
+        log(f"Connected to MQTT broker")
+        c.subscribe(args.request_topic)
+        log(f"Subscribed to {args.request_topic}")
+    else:
+        log(f"Connection failed: {rc}")
+
+def on_message(c, userdata, msg):
+    try:
+        payload = msg.payload.decode('utf-8')
+        log(f"Request: {payload}")
+        req = json.loads(payload)
+
+        request_id = req.get("id")
+        method = req.get("method")
+        params = req.get("params", {})
+
+        if method in METHODS:
+            METHODS[method](request_id, params)
+        else:
+            send_error(request_id, -32601, f"Method not found: {method}")
+    except json.JSONDecodeError as e:
+        log(f"Invalid JSON: {e}")
+    except Exception as e:
+        log(f"Error handling message: {e}")
+
+def main():
+    global args, client
+
+    parser = argparse.ArgumentParser(description='V4L2-MPP MQTT Camera Service')
+    parser.add_argument('--mqtt-host', default='localhost', help='MQTT broker host')
+    parser.add_argument('--mqtt-port', type=int, default=1883, help='MQTT broker port')
+    parser.add_argument('--mqtt-user', default=None, help='MQTT username')
+    parser.add_argument('--mqtt-pass', default=None, help='MQTT password')
+    parser.add_argument('--jpeg-sock', default=None, help='JPEG snapshot socket')
+    parser.add_argument('--request-topic', default='camera/request', help='MQTT request topic')
+    parser.add_argument('--response-topic', default='camera/response', help='MQTT response topic')
+    parser.add_argument('--notification-topic', default='camera/notification', help='MQTT notification topic')
+    parser.add_argument('--timelapse-dir', default='/userdata/.tmp_timelapse', help='Timelapse output directory')
+    parser.add_argument('--publish-dir', default=None, help='Directory to create symlinks for timelapse videos')
+    parser.add_argument('--monitor-output', default='/tmp/.monitor.jpg', help='Monitor output path')
+    parser.add_argument('--auto-close-timelapses', default=True, action='store_true', help='Auto-close previous timelapse when starting new one')
+    args = parser.parse_args()
+
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    if args.mqtt_user:
+        client.username_pw_set(args.mqtt_user, args.mqtt_pass)
+
+    def shutdown(signum, frame):
+        log("Shutting down...")
+        client.disconnect()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
+
+    log(f"Connecting to {args.mqtt_host}:{args.mqtt_port}")
+    client.connect(args.mqtt_host, args.mqtt_port, 60)
+
+    log("Ensuring monitor symlink")
+    ensure_monitor_symlink()
+
+    log("Finishing any active timelapse on startup")
+    threading.Thread(target=finish_all_timelapses, daemon=True).start()
+
+    log("Start snapshot interval thread")
+    threading.Thread(target=snapshot_interval_loop, args=(args.monitor_output,), daemon=True).start()
+
+    log("Starting MQTT loop")
+    client.loop_forever()
+
+if __name__ == '__main__':
+    main()
