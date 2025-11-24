@@ -3,10 +3,6 @@
 DIR=$(realpath "$(dirname "$0")")
 cd "$DIR"
 
-if [[ ! -d mpp ]]; then
-  git clone https://github.com/rockchip-linux/mpp.git
-fi
-
 set -xeo pipefail
 
 cd mpp
