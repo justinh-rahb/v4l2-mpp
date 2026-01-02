@@ -1,0 +1,21 @@
+[16:22:44] Server running on http://0.0.0.0:8081
+[16:22:44]   /control - V4L2 control interface
+[16:23:25] Request: /control from 127.0.0.1
+[16:23:25] HTTP 127.0.0.1 - "GET /control HTTP/1.1" 200 -
+[16:23:25] Request done: /control
+[16:23:25] Request: /api/v4l2/ctrls?cam=1 from 127.0.0.1
+[16:23:25] Request: /api/v4l2/info?cam=1 from 127.0.0.1
+[16:23:25] An unexpected error occurred: [Errno 2] No such file or directory: 'v4l2-ctl'
+[16:23:25] HTTP 127.0.0.1 - "GET /api/v4l2/info?cam=1 HTTP/1.1" 500 -
+[16:23:25] Request done: /api/v4l2/info?cam=1
+[16:23:25] An unexpected error occurred: [Errno 2] No such file or directory: 'v4l2-ctl'
+[16:23:25] HTTP 127.0.0.1 - "GET /api/v4l2/ctrls?cam=1 HTTP/1.1" 500 -
+[16:23:25] Request done: /api/v4l2/ctrls?cam=1
+[16:23:25] Request: /api/v4l2/ctrls?cam=2 from 127.0.0.1
+[16:23:25] Request: /api/v4l2/info?cam=2 from 127.0.0.1
+[16:23:25] An unexpected error occurred: [Errno 2] No such file or directory: 'v4l2-ctl'
+[16:23:25] HTTP 127.0.0.1 - "GET /api/v4l2/info?cam=2 HTTP/1.1" 500 -
+[16:23:25] An unexpected error occurred: [Errno 2] No such file or directory: 'v4l2-ctl'
+[16:23:25] Request done: /api/v4l2/info?cam=2
+[16:23:25] HTTP 127.0.0.1 - "GET /api/v4l2/ctrls?cam=2 HTTP/1.1" 500 -
+[16:23:25] Request done: /api/v4l2/ctrls?cam=2
