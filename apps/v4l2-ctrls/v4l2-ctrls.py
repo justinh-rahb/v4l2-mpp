@@ -48,9 +48,29 @@ HTML_PAGE = """<!doctype html>
       color-scheme: light dark;
       --bg: #0f1115;
       --panel: #1b1f2a;
-      --accent: #4ea1ff;
+      --panel-strong: #222838;
+      --tile: #1c2230;
+      --accent: #63b3ff;
+      --accent-strong: #4ea1ff;
       --text: #e6e9ef;
       --muted: #9aa3b2;
+      --border: #2b3040;
+      --shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+      --gradient: linear-gradient(145deg, rgba(78, 161, 255, 0.12), rgba(0, 0, 0, 0));
+    }}
+    [data-theme="light"] {{
+      color-scheme: light;
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --panel-strong: #f0f2f7;
+      --tile: #ffffff;
+      --accent: #3d7bff;
+      --accent-strong: #2f62d8;
+      --text: #1a1f2b;
+      --muted: #5c677d;
+      --border: #e3e6ef;
+      --shadow: 0 12px 30px rgba(30, 46, 90, 0.12);
+      --gradient: linear-gradient(145deg, rgba(61, 123, 255, 0.1), rgba(255, 255, 255, 0));
     }}
     body {{
       margin: 0;
@@ -60,8 +80,12 @@ HTML_PAGE = """<!doctype html>
     }}
     header {{
       padding: 16px 20px;
-      background: #12141b;
-      border-bottom: 1px solid #252a36;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
     }}
     header h1 {{
       margin: 0;
@@ -75,9 +99,14 @@ HTML_PAGE = """<!doctype html>
     }}
     .panel {{
       background: var(--panel);
-      border-radius: 12px;
+      border-radius: 16px;
       padding: 16px;
-      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+    }}
+    .panel--preview {{
+      background: var(--panel);
+      background-image: var(--gradient);
     }}
     .panel h2 {{
       margin-top: 0;
@@ -92,9 +121,9 @@ HTML_PAGE = """<!doctype html>
     select, input[type=\"text\"], input[type=\"number\"], input[type=\"range\"] {{
       width: 100%;
       padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid #2b3040;
-      background: #10131a;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
       color: var(--text);
       font-size: 14px;
       box-sizing: border-box;
@@ -106,10 +135,8 @@ HTML_PAGE = """<!doctype html>
     }}
     .row input[type=\"range\"] {{
       flex: 1;
-    }}    .row input[type="number"] {{
-      width: 80px;
-      flex: 0 0 auto;
-    }}    button {{
+    }}
+    button {{
       width: 100%;
       padding: 12px;
       border-radius: 10px;
@@ -118,6 +145,11 @@ HTML_PAGE = """<!doctype html>
       font-weight: 600;
       border: none;
       cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.2s ease;
+    }}
+    button:hover {{
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
     }}
     button:disabled {{
       opacity: 0.6;
@@ -132,11 +164,12 @@ HTML_PAGE = """<!doctype html>
       width: 100%;
       aspect-ratio: 16/9;
       background: #0b0e14;
-      border-radius: 10px;
+      border-radius: 14px;
       overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
+      border: 1px solid var(--border);
     }}
     .preview iframe, .preview img {{
       width: 100%;
@@ -145,34 +178,95 @@ HTML_PAGE = """<!doctype html>
       border: 0;
     }}
     .control {{
-      margin-bottom: 14px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid #2b3040;
-    }}
-    .control:last-child {{
-      border-bottom: none;
+      background: var(--tile);
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
     }}
     .control-title {{
       font-size: 14px;
       margin-bottom: 6px;
     }}
+    .control-grid {{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }}
+    .section-title {{
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 18px 0 10px;
+    }}
+    .slider-row {{
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }}
+    input[type=\"range\"] {{
+      height: 36px;
+      accent-color: var(--accent-strong);
+    }}
+    .control input[type=\"number\"] {{
+      margin-top: 10px;
+    }}
+    .value-pill {{
+      min-width: 62px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--panel-strong);
+      border: 1px solid var(--border);
+      text-align: center;
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+    }}
     .status {{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       font-size: 12px;
-      background: #0f1218;
+      background: var(--panel-strong);
       padding: 10px;
-      border-radius: 8px;
+      border-radius: 12px;
       white-space: pre-wrap;
       min-height: 80px;
+      border: 1px solid var(--border);
+    }}
+    .action-bar {{
+      position: sticky;
+      bottom: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      padding-top: 14px;
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0), var(--panel) 60%);
+    }}
+    .ghost {{
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }}
+    .theme-select {{
+      min-width: 140px;
     }}
   </style>
 </head>
 <body>
   <header>
     <h1>{title}</h1>
+    <div style=\"display:flex; gap:8px; align-items:center;\">
+      <label for=\"theme-select\" style=\"margin-bottom:0;\">Theme</label>
+      <select id=\"theme-select\" class=\"theme-select\">
+        <option value=\"system\">System</option>
+        <option value=\"dark\">Dark</option>
+        <option value=\"light\">Light</option>
+      </select>
+    </div>
   </header>
   <main>
-    <section class=\"panel\">
+    <section class=\"panel panel--preview\">
       <h2>Preview</h2>
       <label for=\"base-url\">Streamer base URL</label>
       <input id=\"base-url\" type=\"text\" placeholder=\"http://127.0.0.1/\" />
@@ -196,7 +290,10 @@ HTML_PAGE = """<!doctype html>
     <section class=\"panel\">
       <h2>Controls</h2>
       <div id=\"controls\"></div>
-      <button id=\"apply\">Apply changes</button>
+      <div class=\"action-bar\">
+        <button id=\"apply\">Apply changes</button>
+        <button id=\"reset\" class=\"ghost\">Reset</button>
+      </div>
     </section>
     <section class=\"panel\">
       <h2>Status</h2>
@@ -210,13 +307,33 @@ HTML_PAGE = """<!doctype html>
     const preview = document.getElementById('preview');
     const controlsContainer = document.getElementById('controls');
     const applyButton = document.getElementById('apply');
+    const resetButton = document.getElementById('reset');
     const statusBox = document.getElementById('status');
+    const themeSelect = document.getElementById('theme-select');
 
     let cams = [];
     let currentControls = [];
+    let lastControls = [];
+
+    const GROUPS = [
+      {{ key: 'focus', title: 'Focus', match: name => name.includes('focus') }},
+      {{ key: 'exposure', title: 'Exposure', match: name => name.includes('exposure') }},
+      {{ key: 'white_balance', title: 'White Balance', match: name => name.includes('white_balance') }},
+      {{ key: 'color', title: 'Color', match: name => ['brightness', 'contrast', 'saturation', 'hue', 'gain', 'gamma'].some(t => name.includes(t)) }},
+      {{ key: 'image', title: 'Image', match: name => ['sharpness', 'zoom', 'pan', 'tilt'].some(t => name.includes(t)) }},
+    ];
 
     function logStatus(message) {{
       statusBox.textContent = message;
+    }}
+
+    function applyTheme(theme) {{
+      if (theme === 'system') {{
+        document.documentElement.removeAttribute('data-theme');
+      }} else {{
+        document.documentElement.setAttribute('data-theme', theme);
+      }}
+      localStorage.setItem('v4l2ctrls-theme', theme);
     }}
 
     function getBaseUrl() {{
@@ -263,7 +380,7 @@ HTML_PAGE = """<!doctype html>
 
       if (control.type === 'int') {{
         const row = document.createElement('div');
-        row.className = 'row';
+        row.className = 'slider-row';
         const range = document.createElement('input');
         range.type = 'range';
         range.min = control.min;
@@ -272,6 +389,9 @@ HTML_PAGE = """<!doctype html>
         range.value = control.value;
         range.dataset.control = control.name;
         range.dataset.role = 'value';
+        const pill = document.createElement('div');
+        pill.className = 'value-pill';
+        pill.textContent = String(control.value);
         const number = document.createElement('input');
         number.type = 'number';
         number.min = control.min;
@@ -282,21 +402,16 @@ HTML_PAGE = """<!doctype html>
         number.dataset.role = 'value';
         range.addEventListener('input', () => {{
           number.value = range.value;
+          pill.textContent = range.value;
         }});
         number.addEventListener('input', () => {{
           range.value = number.value;
-        }});
-        number.addEventListener('wheel', (e) => {{
-          e.preventDefault();
-          const step = parseInt(number.step) || 1;
-          const delta = e.deltaY > 0 ? -step : step;
-          const newValue = Math.max(number.min, Math.min(number.max, parseInt(number.value) + delta));
-          number.value = newValue;
-          range.value = newValue;
+          pill.textContent = number.value;
         }});
         row.appendChild(range);
-        row.appendChild(number);
+        row.appendChild(pill);
         wrapper.appendChild(row);
+        wrapper.appendChild(number);
       }} else if (control.type === 'bool') {{
         const select = document.createElement('select');
         select.dataset.control = control.name;
@@ -326,18 +441,42 @@ HTML_PAGE = """<!doctype html>
       return wrapper;
     }}
 
+    function groupFor(name) {{
+      for (const group of GROUPS) {{
+        if (group.match(name)) {{
+          return group.key;
+        }}
+      }}
+      return 'other';
+    }}
+
     function renderControls(controls) {{
       controlsContainer.innerHTML = '';
-      if (controls.length === 0) {{
-        const msg = document.createElement('div');
-        msg.style.color = 'var(--muted)';
-        msg.style.fontStyle = 'italic';
-        msg.textContent = 'This device has no writable controls.';
-        controlsContainer.appendChild(msg);
-        return;
-      }}
+      const buckets = {{}};
       controls.forEach(control => {{
-        controlsContainer.appendChild(buildControl(control));
+        const key = groupFor(control.name);
+        if (!buckets[key]) {{
+          buckets[key] = [];
+        }}
+        buckets[key].push(control);
+      }});
+      const ordered = [...GROUPS.map(group => group.key), 'other'];
+      ordered.forEach(key => {{
+        const items = buckets[key] || [];
+        if (!items.length) {{
+          return;
+        }}
+        const title = document.createElement('div');
+        const group = GROUPS.find(g => g.key === key);
+        title.className = 'section-title';
+        title.textContent = group ? group.title : 'Other';
+        controlsContainer.appendChild(title);
+        const grid = document.createElement('div');
+        grid.className = 'control-grid';
+        items.forEach(control => {{
+          grid.appendChild(buildControl(control));
+        }});
+        controlsContainer.appendChild(grid);
       }});
     }}
 
@@ -350,6 +489,7 @@ HTML_PAGE = """<!doctype html>
           throw new Error(data.error || 'Failed to load controls');
         }}
         currentControls = data.controls || data;
+        lastControls = JSON.parse(JSON.stringify(currentControls));
         renderControls(currentControls);
         logStatus(`Loaded ${{currentControls.length}} controls.`);
       }} catch (err) {{
@@ -375,17 +515,13 @@ HTML_PAGE = """<!doctype html>
     async function applyChanges() {{
       const cam = Number(cameraSelect.value);
       const payload = {{}};
-      controlsContainer.querySelectorAll('[data-control][data-role="value"]').forEach(el => {{
+      controlsContainer.querySelectorAll('[data-control][data-role=\"value\"]').forEach(el => {{
         const name = el.dataset.control;
         const parsed = parseInt(el.value, 10);
         if (!Number.isNaN(parsed)) {{
           payload[name] = parsed;
         }}
       }});
-      if (Object.keys(payload).length === 0) {{
-        logStatus('No writable controls to apply.');
-        return;
-      }}
       applyButton.disabled = true;
       try {{
         const response = await fetch(`/api/v4l2/set?cam=${{cam}}`, {{
@@ -398,10 +534,17 @@ HTML_PAGE = """<!doctype html>
           throw new Error(data.stderr || data.error || 'Failed to apply controls');
         }}
         logStatus(`Applied: ${{JSON.stringify(data.applied, null, 2)}}\n${{data.stdout || ''}}`.trim());
-        // Force refresh preview to show changes
-        setTimeout(() => {{
+        if (previewMode.value === 'snapshot') {{
           updatePreview();
-        }}, 100);
+        }} else {{
+          const base = getBaseUrl();
+          const camInfo = cams.find(c => c.cam === cam);
+          if (camInfo) {{
+            const snap = `${{base}}${{camInfo.prefix}}snapshot.jpg?t=${{Date.now()}}`;
+            const img = new Image();
+            img.src = snap;
+          }}
+        }}
       }} catch (err) {{
         logStatus(`Error: ${{err.message}}`);
       }} finally {{
@@ -410,6 +553,9 @@ HTML_PAGE = """<!doctype html>
     }}
 
     async function init() {{
+      const storedTheme = localStorage.getItem('v4l2ctrls-theme') || 'system';
+      themeSelect.value = storedTheme;
+      applyTheme(storedTheme);
       const storedBase = localStorage.getItem('v4l2ctrls-base-url');
       baseUrlInput.value = storedBase || '{base_url}';
       const camsResp = await fetch('/api/cams');
@@ -434,12 +580,23 @@ HTML_PAGE = """<!doctype html>
 
     baseUrlInput.addEventListener('change', updatePreview);
     previewMode.addEventListener('change', updatePreview);
+    themeSelect.addEventListener('change', () => {{
+      applyTheme(themeSelect.value);
+    }});
     cameraSelect.addEventListener('change', async () => {{
       updatePreview();
       await fetchControls(Number(cameraSelect.value));
       await fetchInfo(Number(cameraSelect.value));
     }});
     applyButton.addEventListener('click', applyChanges);
+    resetButton.addEventListener('click', () => {{
+      if (!lastControls.length) {{
+        logStatus('No controls to reset.');
+        return;
+      }}
+      renderControls(lastControls);
+      logStatus('Reset to last loaded values.');
+    }});
 
     init().catch(err => {{
       logStatus(`Error: ${{err.message}}`);
@@ -517,8 +674,6 @@ def parse_ctrls(output: str) -> List[Dict[str, Optional[int]]]:
         ctrl_type = None
         if type_start != -1 and type_end != -1:
             ctrl_type = line[type_start + 1 : type_end].strip()
-        # Check for read-only flag (ro) in flags field
-        readonly = "flags=read-only" in line or "flags=inactive,read-only" in line
         controls.append(
             {
                 "name": name,
@@ -527,7 +682,6 @@ def parse_ctrls(output: str) -> List[Dict[str, Optional[int]]]:
                 "max": get_int_from_parts(parts, "max"),
                 "step": get_int_from_parts(parts, "step"),
                 "value": get_int_from_parts(parts, "value"),
-                "readonly": readonly,
             }
         )
     return controls
@@ -610,9 +764,7 @@ def api_ctrls():
                 ctrl["menu"] = menus[ctrl["name"]]
                 ctrl["type"] = "menu"
     controls = sort_controls(controls)
-    # Filter out read-only controls from the response
-    writable_controls = [ctrl for ctrl in controls if not ctrl.get("readonly", False)]
-    return jsonify({"controls": writable_controls})
+    return jsonify({"controls": controls})
 
 
 @APP.route("/api/v4l2/set", methods=["POST"])
@@ -629,15 +781,12 @@ def api_set():
     if code1 != 0:
         return jsonify({"ok": False, "stdout": out1, "stderr": err1, "code": code1}), 500
     controls = parse_ctrls(out1)
-    allowlist = {ctrl["name"] for ctrl in controls if not ctrl.get("readonly", False)}
+    allowlist = {ctrl["name"] for ctrl in controls}
     control_map = {ctrl["name"]: ctrl for ctrl in controls}
     applied: Dict[str, int] = {}
     set_parts = []
     for key, value in data.items():
         if key not in allowlist:
-            ctrl = control_map.get(key)
-            if ctrl and ctrl.get("readonly", False):
-                return jsonify({"error": f"Control '{key}' is read-only"}), 400
             return jsonify({"error": f"Unknown control: {key}"}), 400
         if not isinstance(value, int):
             return jsonify({"error": f"Value for {key} must be integer"}), 400
@@ -662,12 +811,9 @@ def api_set():
     if not set_parts:
         return jsonify({"error": "No controls provided"}), 400
     cmd = ["v4l2-ctl", "-d", cam.device, f"--set-ctrl={','.join(set_parts)}"]
-    log(f"Running: {' '.join(cmd)}")
     code2, out2, err2 = run_v4l2(cmd)
     ok = code2 == 0
-    if not ok:
-        log(f"v4l2-ctl failed (code {code2}): {err2 or out2}")
-    return jsonify({"ok": ok, "applied": applied, "stdout": out2, "stderr": err2, "code": code2, "cmd": ' '.join(cmd)}), (200 if ok else 500)
+    return jsonify({"ok": ok, "applied": applied, "stdout": out2, "stderr": err2, "code": code2}), (200 if ok else 500)
 
 
 @APP.route("/api/v4l2/info")
