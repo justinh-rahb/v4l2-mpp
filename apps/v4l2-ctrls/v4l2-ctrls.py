@@ -309,7 +309,7 @@ HTML_PAGE = """<!doctype html>
         wrapper.appendChild(select);
       }} else {{
         const span = document.createElement('div');
-        span.textContent = `Unsupported control type: ${control.type}`;
+        span.textContent = `Unsupported control type: ${{control.type}}`;
         wrapper.appendChild(span);
       }}
 
@@ -333,10 +333,10 @@ HTML_PAGE = """<!doctype html>
         }}
         currentControls = data.controls || data;
         renderControls(currentControls);
-        logStatus(`Loaded ${currentControls.length} controls.`);
+        logStatus(`Loaded ${{currentControls.length}} controls.`);
       }} catch (err) {{
         renderControls([]);
-        logStatus(`Error: ${err.message}`);
+        logStatus(`Error: ${{err.message}}`);
       }}
     }}
 
@@ -350,7 +350,7 @@ HTML_PAGE = """<!doctype html>
         const data = await response.json();
         logStatus(data.info || 'No info.');
       }} catch (err) {{
-        logStatus(`Error: ${err.message}`);
+        logStatus(`Error: ${{err.message}}`);
       }}
     }}
 
@@ -388,7 +388,7 @@ HTML_PAGE = """<!doctype html>
           }}
         }}
       }} catch (err) {{
-        logStatus(`Error: ${err.message}`);
+        logStatus(`Error: ${{err.message}}`);
       }} finally {{
         applyButton.disabled = false;
       }}
