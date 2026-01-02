@@ -237,14 +237,14 @@ HTML_PAGE = """<!doctype html>
       let path = '';
       if (mode === 'webrtc') {{
         path = camInfo.prefix + 'webrtc';
-        preview.innerHTML = `<iframe src="${base}${path}"></iframe>`;
+        preview.innerHTML = `<iframe src="${{base}}${{path}}"></iframe>`;
       }} else if (mode === 'mjpg') {{
         path = camInfo.prefix + 'stream.mjpg';
-        preview.innerHTML = `<img src="${base}${path}" alt="MJPG stream" />`;
+        preview.innerHTML = `<img src="${{base}}${{path}}" alt="MJPG stream" />`;
       }} else {{
         const epoch = Date.now();
         path = camInfo.prefix + 'snapshot.jpg?t=' + epoch;
-        preview.innerHTML = `<img src="${base}${path}" alt="Snapshot" />`;
+        preview.innerHTML = `<img src="${{base}}${{path}}" alt="Snapshot" />`;
       }}
       localStorage.setItem('v4l2ctrls-base-url', baseUrlInput.value);
       localStorage.setItem('v4l2ctrls-preview-mode', mode);
@@ -326,7 +326,7 @@ HTML_PAGE = """<!doctype html>
     async function fetchControls(cam) {{
       logStatus('Loading controls...');
       try {{
-        const response = await fetch(`/api/v4l2/ctrls?cam=${cam}`);
+        const response = await fetch(`/api/v4l2/ctrls?cam=${{cam}}`);
         const data = await response.json();
         if (!response.ok) {{
           throw new Error(data.error || 'Failed to load controls');
@@ -342,7 +342,7 @@ HTML_PAGE = """<!doctype html>
 
     async function fetchInfo(cam) {{
       try {{
-        const response = await fetch(`/api/v4l2/info?cam=${cam}`);
+        const response = await fetch(`/api/v4l2/info?cam=${{cam}}`);
         if (!response.ok) {{
           const data = await response.json();
           throw new Error(data.error || 'Failed to fetch info');
@@ -366,7 +366,7 @@ HTML_PAGE = """<!doctype html>
       }});
       applyButton.disabled = true;
       try {{
-        const response = await fetch(`/api/v4l2/set?cam=${cam}`, {{
+        const response = await fetch(`/api/v4l2/set?cam=${{cam}}`, {{
           method: 'POST',
           headers: {{'Content-Type': 'application/json'}},
           body: JSON.stringify(payload),
@@ -375,14 +375,14 @@ HTML_PAGE = """<!doctype html>
         if (!response.ok || !data.ok) {{
           throw new Error(data.stderr || data.error || 'Failed to apply controls');
         }}
-        logStatus(`Applied: ${JSON.stringify(data.applied, null, 2)}\n${data.stdout || ''}`.trim());
+        logStatus(`Applied: ${{JSON.stringify(data.applied, null, 2)}}\n${{data.stdout || ''}}`.trim());
         if (previewMode.value === 'snapshot') {{
           updatePreview();
         }} else {{
           const base = getBaseUrl();
           const camInfo = cams.find(c => c.cam === cam);
           if (camInfo) {{
-            const snap = `${base}${camInfo.prefix}snapshot.jpg?t=${Date.now()}`;
+            const snap = `${{base}}${{camInfo.prefix}}snapshot.jpg?t=${{Date.now()}}`;
             const img = new Image();
             img.src = snap;
           }}
@@ -401,7 +401,7 @@ HTML_PAGE = """<!doctype html>
       cams = await camsResp.json();
       cameraSelect.innerHTML = '';
       cams.forEach(cam => {{
-        const opt = new Option(`Cam ${cam.cam}`, String(cam.cam));
+        const opt = new Option(`Cam ${{cam.cam}}`, String(cam.cam));
         cameraSelect.add(opt);
       }});
       const storedCam = Number(localStorage.getItem('v4l2ctrls-cam'));
@@ -427,7 +427,7 @@ HTML_PAGE = """<!doctype html>
     applyButton.addEventListener('click', applyChanges);
 
     init().catch(err => {{
-      logStatus(`Error: ${err.message}`);
+      logStatus(`Error: ${{err.message}}`);
     }});
   </script>
 </body>
