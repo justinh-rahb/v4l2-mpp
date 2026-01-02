@@ -5,6 +5,10 @@ Touch-friendly V4L2 controls UI with embedded streamer preview.
 Usage examples:
   python3 apps/v4l2-ctrls/v4l2-ctrls.py --device /dev/video11
   python3 apps/v4l2-ctrls/v4l2-ctrls.py --device /dev/video11 --device /dev/video12 --port 5001 --base-url http://127.0.0.1/
+
+Requires:
+  - Flask (pip install flask)
+  - v4l2-ctl in PATH
 """
 
 import argparse
