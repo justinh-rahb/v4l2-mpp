@@ -106,8 +106,10 @@ HTML_PAGE = """<!doctype html>
     }}
     .row input[type=\"range\"] {{
       flex: 1;
-    }}
-    button {{
+    }}    .row input[type="number"] {{
+      width: 80px;
+      flex: 0 0 auto;
+    }}    button {{
       width: 100%;
       padding: 12px;
       border-radius: 10px;
@@ -284,6 +286,14 @@ HTML_PAGE = """<!doctype html>
         number.addEventListener('input', () => {{
           range.value = number.value;
         }});
+        number.addEventListener('wheel', (e) => {{
+          e.preventDefault();
+          const step = parseInt(number.step) || 1;
+          const delta = e.deltaY > 0 ? -step : step;
+          const newValue = Math.max(number.min, Math.min(number.max, parseInt(number.value) + delta));
+          number.value = newValue;
+          range.value = newValue;
+        }});
         row.appendChild(range);
         row.appendChild(number);
         wrapper.appendChild(row);
@@ -318,6 +328,14 @@ HTML_PAGE = """<!doctype html>
 
     function renderControls(controls) {{
       controlsContainer.innerHTML = '';
+      if (controls.length === 0) {{
+        const msg = document.createElement('div');
+        msg.style.color = 'var(--muted)';
+        msg.style.fontStyle = 'italic';
+        msg.textContent = 'This device has no writable controls.';
+        controlsContainer.appendChild(msg);
+        return;
+      }}
       controls.forEach(control => {{
         controlsContainer.appendChild(buildControl(control));
       }});
@@ -357,13 +375,17 @@ HTML_PAGE = """<!doctype html>
     async function applyChanges() {{
       const cam = Number(cameraSelect.value);
       const payload = {{}};
-      controlsContainer.querySelectorAll('[data-control][data-role=\"value\"]').forEach(el => {{
+      controlsContainer.querySelectorAll('[data-control][data-role="value"]').forEach(el => {{
         const name = el.dataset.control;
         const parsed = parseInt(el.value, 10);
         if (!Number.isNaN(parsed)) {{
           payload[name] = parsed;
         }}
       }});
+      if (Object.keys(payload).length === 0) {{
+        logStatus('No writable controls to apply.');
+        return;
+      }}
       applyButton.disabled = true;
       try {{
         const response = await fetch(`/api/v4l2/set?cam=${{cam}}`, {{
@@ -376,17 +398,10 @@ HTML_PAGE = """<!doctype html>
           throw new Error(data.stderr || data.error || 'Failed to apply controls');
         }}
         logStatus(`Applied: ${{JSON.stringify(data.applied, null, 2)}}\n${{data.stdout || ''}}`.trim());
-        if (previewMode.value === 'snapshot') {{
+        // Force refresh preview to show changes
+        setTimeout(() => {{
           updatePreview();
-        }} else {{
-          const base = getBaseUrl();
-          const camInfo = cams.find(c => c.cam === cam);
-          if (camInfo) {{
-            const snap = `${{base}}${{camInfo.prefix}}snapshot.jpg?t=${{Date.now()}}`;
-            const img = new Image();
-            img.src = snap;
-          }}
-        }}
+        }}, 100);
       }} catch (err) {{
         logStatus(`Error: ${{err.message}}`);
       }} finally {{
@@ -502,6 +517,8 @@ def parse_ctrls(output: str) -> List[Dict[str, Optional[int]]]:
         ctrl_type = None
         if type_start != -1 and type_end != -1:
             ctrl_type = line[type_start + 1 : type_end].strip()
+        # Check for read-only flag (ro) in flags field
+        readonly = "flags=read-only" in line or "flags=inactive,read-only" in line
         controls.append(
             {
                 "name": name,
@@ -510,6 +527,7 @@ def parse_ctrls(output: str) -> List[Dict[str, Optional[int]]]:
                 "max": get_int_from_parts(parts, "max"),
                 "step": get_int_from_parts(parts, "step"),
                 "value": get_int_from_parts(parts, "value"),
+                "readonly": readonly,
             }
         )
     return controls
@@ -592,7 +610,9 @@ def api_ctrls():
                 ctrl["menu"] = menus[ctrl["name"]]
                 ctrl["type"] = "menu"
     controls = sort_controls(controls)
-    return jsonify({"controls": controls})
+    # Filter out read-only controls from the response
+    writable_controls = [ctrl for ctrl in controls if not ctrl.get("readonly", False)]
+    return jsonify({"controls": writable_controls})
 
 
 @APP.route("/api/v4l2/set", methods=["POST"])
@@ -609,12 +629,15 @@ def api_set():
     if code1 != 0:
         return jsonify({"ok": False, "stdout": out1, "stderr": err1, "code": code1}), 500
     controls = parse_ctrls(out1)
-    allowlist = {ctrl["name"] for ctrl in controls}
+    allowlist = {ctrl["name"] for ctrl in controls if not ctrl.get("readonly", False)}
     control_map = {ctrl["name"]: ctrl for ctrl in controls}
     applied: Dict[str, int] = {}
     set_parts = []
     for key, value in data.items():
         if key not in allowlist:
+            ctrl = control_map.get(key)
+            if ctrl and ctrl.get("readonly", False):
+                return jsonify({"error": f"Control '{key}' is read-only"}), 400
             return jsonify({"error": f"Unknown control: {key}"}), 400
         if not isinstance(value, int):
             return jsonify({"error": f"Value for {key} must be integer"}), 400
@@ -639,9 +662,12 @@ def api_set():
     if not set_parts:
         return jsonify({"error": "No controls provided"}), 400
     cmd = ["v4l2-ctl", "-d", cam.device, f"--set-ctrl={','.join(set_parts)}"]
+    log(f"Running: {' '.join(cmd)}")
     code2, out2, err2 = run_v4l2(cmd)
     ok = code2 == 0
-    return jsonify({"ok": ok, "applied": applied, "stdout": out2, "stderr": err2, "code": code2}), (200 if ok else 500)
+    if not ok:
+        log(f"v4l2-ctl failed (code {code2}): {err2 or out2}")
+    return jsonify({"ok": ok, "applied": applied, "stdout": out2, "stderr": err2, "code": code2, "cmd": ' '.join(cmd)}), (200 if ok else 500)
 
 
 @APP.route("/api/v4l2/info")
