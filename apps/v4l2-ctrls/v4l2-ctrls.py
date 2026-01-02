@@ -473,6 +473,16 @@ def normalize_type(ctrl_type: Optional[str]) -> str:
     return ctrl_type
 
 
+def get_int_from_parts(parts: List[str], field: str) -> Optional[int]:
+    token = next((p for p in parts if p.startswith(f"{field}=")), None)
+    if not token:
+        return None
+    try:
+        return int(token.split("=", 1)[1])
+    except ValueError:
+        return None
+
+
 def parse_ctrls(output: str) -> List[Dict[str, Optional[int]]]:
     controls = []
     for line in output.splitlines():
@@ -488,22 +498,14 @@ def parse_ctrls(output: str) -> List[Dict[str, Optional[int]]]:
         ctrl_type = None
         if type_start != -1 and type_end != -1:
             ctrl_type = line[type_start + 1 : type_end].strip()
-        def get_int(field: str) -> Optional[int]:
-            token = next((p for p in parts if p.startswith(f"{field}=")), None)
-            if not token:
-                return None
-            try:
-                return int(token.split("=", 1)[1])
-            except ValueError:
-                return None
         controls.append(
             {
                 "name": name,
                 "type": normalize_type(ctrl_type),
-                "min": get_int("min"),
-                "max": get_int("max"),
-                "step": get_int("step"),
-                "value": get_int("value"),
+                "min": get_int_from_parts(parts, "min"),
+                "max": get_int_from_parts(parts, "max"),
+                "step": get_int_from_parts(parts, "step"),
+                "value": get_int_from_parts(parts, "value"),
             }
         )
     return controls
@@ -546,7 +548,8 @@ def sort_controls(controls: List[Dict[str, Optional[int]]]) -> List[Dict[str, Op
 def get_cam_or_400(cam_index: str, cams: List[Camera]):
     try:
         cam = int(cam_index)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        log(f"Invalid cam index {cam_index!r}: {exc}")
         return None, jsonify({"error": "Invalid camera index"}), 400
     if cam < 1 or cam > len(cams):
         return None, jsonify({"error": "Camera out of range"}), 400
@@ -603,6 +606,7 @@ def api_set():
         return jsonify({"ok": False, "stdout": out1, "stderr": err1, "code": code1}), 500
     controls = parse_ctrls(out1)
     allowlist = {ctrl["name"] for ctrl in controls}
+    control_map = {ctrl["name"]: ctrl for ctrl in controls}
     applied: Dict[str, int] = {}
     set_parts = []
     for key, value in data.items():
@@ -610,6 +614,22 @@ def api_set():
             return jsonify({"error": f"Unknown control: {key}"}), 400
         if not isinstance(value, int):
             return jsonify({"error": f"Value for {key} must be integer"}), 400
+        ctrl_def = control_map.get(key)
+        if ctrl_def:
+            min_val = ctrl_def.get("min")
+            max_val = ctrl_def.get("max")
+            if min_val is not None and max_val is not None:
+                if not (min_val <= value <= max_val):
+                    return (
+                        jsonify(
+                            {
+                                "error": (
+                                    f"{key}={value} out of range [{min_val}, {max_val}]"
+                                )
+                            }
+                        ),
+                        400,
+                    )
         applied[key] = value
         set_parts.append(f"{key}={value}")
     if not set_parts:
