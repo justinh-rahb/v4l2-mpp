@@ -1,4 +1,4 @@
-APPS = stream-http detect-http detect-rknn-yolo11
+APPS = stream-http detect-http detect-rknn-yolo11 v4l2-ctrls
 APPS_DIR = apps
 
 ifneq (x,x$(wildcard deps/mpp/usr-local/lib/librockchip_mpp.a))
