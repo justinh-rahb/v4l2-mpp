@@ -512,16 +512,33 @@ HTML_PAGE = """<!doctype html>
       }}
     }}
 
+    function controlMap(controls) {{
+      const map = {{}};
+      (controls || []).forEach(control => {{
+        map[control.name] = control;
+      }});
+      return map;
+    }}
+
     async function applyChanges() {{
       const cam = Number(cameraSelect.value);
       const payload = {{}};
+      const previous = controlMap(lastControls);
       controlsContainer.querySelectorAll('[data-control][data-role=\"value\"]').forEach(el => {{
         const name = el.dataset.control;
         const parsed = parseInt(el.value, 10);
-        if (!Number.isNaN(parsed)) {{
+        if (Number.isNaN(parsed)) {{
+          return;
+        }}
+        const before = previous[name];
+        if (!before || before.value !== parsed) {{
           payload[name] = parsed;
         }}
       }});
+      if (!Object.keys(payload).length) {{
+        logStatus('No changes to apply.');
+        return;
+      }}
       applyButton.disabled = true;
       try {{
         const response = await fetch(`/api/v4l2/set?cam=${{cam}}`, {{
@@ -534,6 +551,13 @@ HTML_PAGE = """<!doctype html>
           throw new Error(data.stderr || data.error || 'Failed to apply controls');
         }}
         logStatus(`Applied: ${{JSON.stringify(data.applied, null, 2)}}\n${{data.stdout || ''}}`.trim());
+        const updated = controlMap(currentControls);
+        Object.entries(data.applied || {{}}).forEach(([name, value]) => {{
+          if (updated[name]) {{
+            updated[name].value = value;
+          }}
+        }});
+        lastControls = JSON.parse(JSON.stringify(currentControls));
         if (previewMode.value === 'snapshot') {{
           updatePreview();
         }} else {{
