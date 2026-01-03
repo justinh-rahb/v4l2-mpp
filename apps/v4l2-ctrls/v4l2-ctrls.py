@@ -350,11 +350,11 @@ HTML_PAGE = """<!doctype html>
           ? `${{camInfo.prefix}}stream.mjpg`
           : `${{camInfo.prefix}}snapshot.jpg?t=${{Date.now()}}`);
       let base = getCameraUrl();
-      if (base.includes('{path}')) {{
-        return base.replace('{path}', suffix);
+      if (base.includes('{{path}}')) {{
+        return base.replace('{{path}}', suffix);
       }}
-      if (base.includes('{prefix}') || base.includes('{mode}')) {{
-        return base.replace('{prefix}', camInfo.prefix).replace('{mode}', mode);
+      if (base.includes('{{prefix}}') || base.includes('{{mode}}')) {{
+        return base.replace('{{prefix}}', camInfo.prefix).replace('{{mode}}', mode);
       }}
       if (!base.endsWith('/')) {{
         base += '/';
