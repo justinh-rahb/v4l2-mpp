@@ -643,9 +643,14 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def detect_devices(limit: int = 8) -> List[str]:
-    devices = sorted(glob.glob("/dev/video*"))
-    return devices[:limit]
+def parse_listed_devices(output: str) -> List[str]:
+    devices = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line.startswith("/dev/"):
+            continue
+        devices.append(line.split()[0])
+    return devices
 
 
 def run_v4l2(args: List[str], timeout: float = 3.0) -> Tuple[int, str, str]:
@@ -661,6 +666,25 @@ def run_v4l2(args: List[str], timeout: float = 3.0) -> Tuple[int, str, str]:
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired as exc:
         return 124, "", f"Timeout running {' '.join(args)}: {exc}"
+
+
+def detect_devices(limit: int = 8) -> List[str]:
+    devices: List[str] = []
+    code, out, err = run_v4l2(["v4l2-ctl", "--list-devices"], timeout=2.0)
+    if code == 0:
+        devices = parse_listed_devices(out)
+    if not devices:
+        subdevs = sorted(glob.glob("/dev/v4l-subdev*"))
+        videos = sorted(glob.glob("/dev/video*"))
+        devices = subdevs + videos
+    subdevs = [device for device in devices if "/dev/v4l-subdev" in device]
+    others = [device for device in devices if device not in subdevs]
+    devices = subdevs + others
+    preferred = "/dev/v4l-subdev2"
+    if preferred in devices:
+        devices.remove(preferred)
+        devices.insert(0, preferred)
+    return devices[:limit]
 
 
 def normalize_type(ctrl_type: Optional[str]) -> str:
