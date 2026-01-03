@@ -14,6 +14,7 @@ Requires:
 import argparse
 import glob
 import json
+import os
 import subprocess
 import sys
 import time
@@ -368,7 +369,7 @@ HTML_PAGE = """<!doctype html>
     }}
 
     function updatePreview() {{
-      const cam = Number(cameraSelect.value);
+      const cam = cameraSelect.value;
       const mode = previewMode.value;
       const camInfo = cams.find(c => c.cam === cam);
       if (!camInfo) {{
@@ -385,7 +386,7 @@ HTML_PAGE = """<!doctype html>
       }}
       localStorage.setItem('v4l2ctrls-base-url', cameraUrlInput.value);
       localStorage.setItem('v4l2ctrls-preview-mode', mode);
-      localStorage.setItem('v4l2ctrls-cam', String(cam));
+      localStorage.setItem('v4l2ctrls-cam', cam);
     }}
 
     function buildControl(control) {{
@@ -501,7 +502,7 @@ HTML_PAGE = """<!doctype html>
     async function fetchControls(cam) {{
       logStatus('Loading controls...');
       try {{
-        const response = await fetch(apiUrl(`api/v4l2/ctrls?cam=${{cam}}`));
+        const response = await fetch(apiUrl(`api/v4l2/ctrls?cam=${{encodeURIComponent(cam)}}`));
         const data = await response.json();
         if (!response.ok) {{
           throw new Error(data.error || 'Failed to load controls');
@@ -518,7 +519,7 @@ HTML_PAGE = """<!doctype html>
 
     async function fetchInfo(cam) {{
       try {{
-        const response = await fetch(apiUrl(`api/v4l2/info?cam=${{cam}}`));
+        const response = await fetch(apiUrl(`api/v4l2/info?cam=${{encodeURIComponent(cam)}}`));
         if (!response.ok) {{
           const data = await response.json();
           throw new Error(data.error || 'Failed to fetch info');
@@ -539,7 +540,7 @@ HTML_PAGE = """<!doctype html>
     }}
 
     async function applyChanges() {{
-      const cam = Number(cameraSelect.value);
+      const cam = cameraSelect.value;
       const payload = {{}};
       const previous = controlMap(lastControls);
       controlsContainer.querySelectorAll('[data-control][data-role=\"value\"]').forEach(el => {{
@@ -559,7 +560,7 @@ HTML_PAGE = """<!doctype html>
       }}
       applyButton.disabled = true;
       try {{
-        const response = await fetch(apiUrl(`api/v4l2/set?cam=${{cam}}`), {{
+        const response = await fetch(apiUrl(`api/v4l2/set?cam=${{encodeURIComponent(cam)}}`), {{
           method: 'POST',
           headers: {{'Content-Type': 'application/json'}},
           body: JSON.stringify(payload),
@@ -603,20 +604,20 @@ HTML_PAGE = """<!doctype html>
       cams = await camsResp.json();
       cameraSelect.innerHTML = '';
       cams.forEach(cam => {{
-        const opt = new Option(`Cam ${{cam.cam}}`, String(cam.cam));
+        const opt = new Option(cam.cam, cam.cam);
         cameraSelect.add(opt);
       }});
-      const storedCam = Number(localStorage.getItem('v4l2ctrls-cam'));
+      const storedCam = localStorage.getItem('v4l2ctrls-cam');
       if (storedCam && cams.find(c => c.cam === storedCam)) {{
-        cameraSelect.value = String(storedCam);
+        cameraSelect.value = storedCam;
       }}
       const storedMode = localStorage.getItem('v4l2ctrls-preview-mode');
       if (storedMode) {{
         previewMode.value = storedMode;
       }}
       updatePreview();
-      await fetchControls(Number(cameraSelect.value));
-      await fetchInfo(Number(cameraSelect.value));
+      await fetchControls(cameraSelect.value);
+      await fetchInfo(cameraSelect.value);
     }}
 
     cameraUrlInput.addEventListener('change', updatePreview);
@@ -626,8 +627,8 @@ HTML_PAGE = """<!doctype html>
     }});
     cameraSelect.addEventListener('change', async () => {{
       updatePreview();
-      await fetchControls(Number(cameraSelect.value));
-      await fetchInfo(Number(cameraSelect.value));
+      await fetchControls(cameraSelect.value);
+      await fetchInfo(cameraSelect.value);
     }});
     applyButton.addEventListener('click', applyChanges);
     resetButton.addEventListener('click', () => {{
@@ -650,7 +651,7 @@ HTML_PAGE = """<!doctype html>
 
 @dataclass(frozen=True)
 class Camera:
-    cam: int
+    cam: str
     device: str
     prefix: str
 
@@ -787,14 +788,12 @@ def sort_controls(controls: List[Dict[str, Optional[int]]]) -> List[Dict[str, Op
 
 
 def get_cam_or_400(cam_index: str, cams: List[Camera]):
-    try:
-        cam = int(cam_index)
-    except (TypeError, ValueError) as exc:
-        log(f"Invalid cam index {cam_index!r}: {exc}")
-        return None, jsonify({"error": "Invalid camera index"}), 400
-    if cam < 1 or cam > len(cams):
-        return None, jsonify({"error": "Camera out of range"}), 400
-    return cams[cam - 1], None, None
+    if not cam_index:
+        return None, jsonify({"error": "Missing camera id"}), 400
+    cam = next((item for item in cams if item.cam == cam_index), None)
+    if cam is None:
+        return None, jsonify({"error": "Camera not found"}), 400
+    return cam, None, None
 
 
 @APP.route("/")
@@ -897,12 +896,21 @@ def api_info():
 
 def build_cams(devices: List[str]) -> List[Camera]:
     cams = []
+    seen = set()
     for idx, device in enumerate(devices, start=1):
+        base = os.path.basename(device)
+        cam_id = base or f"cam{idx}"
+        if cam_id in seen:
+            suffix = 2
+            while f"{cam_id}-{suffix}" in seen:
+                suffix += 1
+            cam_id = f"{cam_id}-{suffix}"
+        seen.add(cam_id)
         if idx == 1:
             prefix = "/webcam/"
         else:
             prefix = f"/webcam{idx}/"
-        cams.append(Camera(cam=idx, device=device, prefix=prefix))
+        cams.append(Camera(cam=cam_id, device=device, prefix=prefix))
     return cams
 
 
