@@ -272,7 +272,7 @@ HTML_PAGE = """<!doctype html>
     <section class=\"panel panel--preview\">
       <h2>Preview</h2>
       <label for=\"camera-url\">Camera stream URL</label>
-      <input id=\"camera-url\" type=\"text\" placeholder=\"http://127.0.0.1/\" />
+      <input id=\"camera-url\" type=\"text\" placeholder=\"http://127.0.0.1/{{path}}\" />
       <div class=\"row\" style=\"margin-top:12px;\">
         <div style=\"flex:1;\">
           <label for=\"camera-select\">Camera</label>
