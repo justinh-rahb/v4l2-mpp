@@ -71,6 +71,7 @@ class CameraHandler(BaseHTTPRequestHandler):
     mjpeg_sock = None
     h264_sock = None
     webrtc_sock = None
+    control_sock = None
 
     def log_message(self, format, *args):
         log(f"HTTP {self.address_string()} - {format % args}")
@@ -88,6 +89,13 @@ class CameraHandler(BaseHTTPRequestHandler):
             self.handle_player()
         elif path == '/webrtc':
             self.handle_webrtc_player()
+        elif path == '/control':
+            # Redirect to /control/ to ensure relative paths work correctly
+            self.send_response(302)
+            self.send_header('Location', '/control/')
+            self.end_headers()
+        elif path.startswith('/control/'):
+            self.handle_control()
         elif path == '/':
             self.handle_index()
         else:
@@ -99,6 +107,8 @@ class CameraHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == '/webrtc':
             self.handle_webrtc_offer()
+        elif path.startswith('/control'):
+            self.handle_control()
         else:
             self.send_error(404, 'Not Found')
         log(f"POST done: {self.path}")
@@ -118,6 +128,86 @@ class CameraHandler(BaseHTTPRequestHandler):
 
     def handle_index(self):
         self.send_html(HTML_INDEX)
+
+    def handle_control(self):
+        if not self.control_sock:
+            self.send_error(503, 'Control interface not available')
+            return
+        
+        try:
+            parsed = urlparse(self.path)
+            path = parsed.path
+            
+            # Strip /control prefix for the Flask app
+            if path.startswith('/control'):
+                path = path[8:]  # len('/control') = 8
+            if not path:
+                path = '/'
+            
+            query = {}
+            if parsed.query:
+                from urllib.parse import parse_qs
+                query_dict = parse_qs(parsed.query)
+                query = {k: v[0] for k, v in query_dict.items()}
+            
+            request_data = {
+                "method": self.command,
+                "path": path,
+                "query": query
+            }
+            
+            if self.command == "POST":
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > 0:
+                    request_body = self.rfile.read(content_length).decode()
+                    try:
+                        request_data["body"] = json.loads(request_body)
+                    except:
+                        request_data["body"] = request_body
+            
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(5.0)
+            try:
+                sock.connect(self.control_sock)
+                data = json.dumps(request_data) + '\n'
+                sock.sendall(data.encode())
+                response = b''
+                while True:
+                    chunk = sock.recv(65536)
+                    if not chunk:
+                        break
+                    response += chunk
+                    if b'\n' in response:
+                        break
+                result = json.loads(response.decode().strip())
+                log(f"Control socket response: status={result.get('status')}, body_len={len(str(result.get('body', '')))}")
+                
+                status = result.get("status", 200)
+                headers = result.get("headers", {})
+                body = result.get("body", "")
+                
+                # Convert body to bytes
+                if isinstance(body, dict) or isinstance(body, list):
+                    body_bytes = json.dumps(body).encode()
+                    if 'Content-Type' not in headers:
+                        headers['Content-Type'] = 'application/json'
+                elif isinstance(body, str):
+                    body_bytes = body.encode()
+                else:
+                    body_bytes = body
+                
+                # Send response
+                self.send_response(status)
+                headers['Content-Length'] = str(len(body_bytes))
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self.end_headers()
+                self.wfile.write(body_bytes)
+            finally:
+                sock.close()
+        except Exception as e:
+            log(f"Control request error: {e}")
+            self.send_error(500, f'Internal error: {e}')
 
     def handle_snapshot(self):
         if not self.jpeg_sock:
@@ -221,12 +311,14 @@ def main():
     parser.add_argument('--mjpeg-sock', required=True, help='MJPEG stream socket')
     parser.add_argument('--h264-sock', required=True, help='H264 stream socket')
     parser.add_argument('--webrtc-sock', help='WebRTC signaling socket')
+    parser.add_argument('--control-sock', help='V4L2 control interface socket')
     args = parser.parse_args()
 
     CameraHandler.jpeg_sock = args.jpeg_sock
     CameraHandler.mjpeg_sock = args.mjpeg_sock
     CameraHandler.h264_sock = args.h264_sock
     CameraHandler.webrtc_sock = args.webrtc_sock
+    CameraHandler.control_sock = args.control_sock
 
     server = ThreadingHTTPServer((args.bind, args.port), CameraHandler)
     log(f"Server running on http://{args.bind}:{args.port}")
@@ -237,6 +329,8 @@ def main():
     if args.webrtc_sock:
         log(f"  /webrtc       - WebRTC player")
         log(f"  POST /webrtc  - WebRTC offer")
+    if args.control_sock:
+        log(f"  /control      - V4L2 control interface")
 
     try:
         server.serve_forever()
