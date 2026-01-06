@@ -10,6 +10,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from html_index import HTML_INDEX
 from html_player import HTML_PLAYER
 from html_webrtc import HTML_WEBRTC
+from html_controls import HTML_CONTROLS
 
 def log(msg):
     ts = time.strftime('%H:%M:%S')
@@ -133,81 +134,57 @@ class CameraHandler(BaseHTTPRequestHandler):
         if not self.control_sock:
             self.send_error(503, 'Control interface not available')
             return
-        
-        try:
-            parsed = urlparse(self.path)
-            path = parsed.path
-            
-            # Strip /control prefix for the Flask app
-            if path.startswith('/control'):
-                path = path[8:]  # len('/control') = 8
-            if not path:
-                path = '/'
-            
-            query = {}
-            if parsed.query:
-                from urllib.parse import parse_qs
-                query_dict = parse_qs(parsed.query)
-                query = {k: v[0] for k, v in query_dict.items()}
-            
-            request_data = {
-                "method": self.command,
-                "path": path,
-                "query": query
-            }
-            
-            if self.command == "POST":
-                content_length = int(self.headers.get('Content-Length', 0))
-                if content_length > 0:
-                    request_body = self.rfile.read(content_length).decode()
-                    try:
-                        request_data["body"] = json.loads(request_body)
-                    except:
-                        request_data["body"] = request_body
-            
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(5.0)
+
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        # Serve HTML UI at /control/
+        if path == '/control/':
+            self.send_html(HTML_CONTROLS)
+            return
+
+        # Handle JSON-RPC requests at /control/rpc
+        if path == '/control/rpc' and self.command == 'POST':
             try:
-                sock.connect(self.control_sock)
-                data = json.dumps(request_data) + '\n'
-                sock.sendall(data.encode())
-                response = b''
-                while True:
-                    chunk = sock.recv(65536)
-                    if not chunk:
-                        break
-                    response += chunk
-                    if b'\n' in response:
-                        break
-                result = json.loads(response.decode().strip())
-                log(f"Control socket response: status={result.get('status')}, body_len={len(str(result.get('body', '')))}")
-                
-                status = result.get("status", 200)
-                headers = result.get("headers", {})
-                body = result.get("body", "")
-                
-                # Convert body to bytes
-                if isinstance(body, dict) or isinstance(body, list):
-                    body_bytes = json.dumps(body).encode()
-                    if 'Content-Type' not in headers:
-                        headers['Content-Type'] = 'application/json'
-                elif isinstance(body, str):
-                    body_bytes = body.encode()
-                else:
-                    body_bytes = body
-                
-                # Send response
-                self.send_response(status)
-                headers['Content-Length'] = str(len(body_bytes))
-                for key, value in headers.items():
-                    self.send_header(key, value)
-                self.end_headers()
-                self.wfile.write(body_bytes)
-            finally:
-                sock.close()
-        except Exception as e:
-            log(f"Control request error: {e}")
-            self.send_error(500, f'Internal error: {e}')
+                content_length = int(self.headers.get('Content-Length', 0))
+                request_body = self.rfile.read(content_length).decode()
+                rpc_request = json.loads(request_body)
+
+                # Forward JSON-RPC request to control socket
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.settimeout(5.0)
+                try:
+                    sock.connect(self.control_sock)
+                    sock.sendall((json.dumps(rpc_request) + '\n').encode())
+
+                    response = b''
+                    while True:
+                        chunk = sock.recv(65536)
+                        if not chunk:
+                            break
+                        response += chunk
+                        if b'\n' in response:
+                            break
+
+                    rpc_response = json.loads(response.decode().strip())
+                    self.send_json_response(200, rpc_response)
+                finally:
+                    sock.close()
+            except Exception as e:
+                log(f"JSON-RPC error: {e}")
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32603,
+                        "message": f"Internal error: {str(e)}"
+                    },
+                    "id": None
+                }
+                self.send_json_response(500, error_response)
+            return
+
+        # 404 for other paths
+        self.send_error(404, 'Not Found')
 
     def handle_snapshot(self):
         if not self.jpeg_sock:

@@ -1,131 +1,238 @@
 # v4l2-ctrls
 
-Touch-friendly web UI for managing V4L2 camera controls with embedded video preview.
+A backend-only JSON-RPC service that exposes V4L2 camera controls over Unix sockets. Designed for clean separation of concerns and integration with `stream-http`.
 
-## Features
+## Architecture
 
-- Real-time V4L2 control adjustment via web interface
-- Automatic detection and handling of read-only controls
-- Multi-camera support with embedded video streams
-- Modern, colorful UI optimized for touch devices with light/dark theme support
-- Reverse proxy compatible with flexible URL configuration
-- LocalStorage persistence for user preferences (theme, camera selection, preview mode)
+The refactored architecture follows a **one-way data flow**:
+
+```
+stream-http → stream-webrtc → v4l2-ctrls
+    ↓
+  (Web UI)
+```
+
+**Benefits:**
+- No circular dependencies
+- Single responsibility per component
+- Unified web interface through `stream-http`
+- Extensible to support multiple control backends (v4l2, libcamera, etc.)
+
+## Components
+
+### Core Modules
+
+- **`v4l2_core.py`**: Core V4L2 operations (device detection, control parsing, value management)
+- **`jsonrpc_server.py`**: JSON-RPC 2.0 server and client implementation
+- **`persistence.py`**: Control value persistence (save/restore to JSON files)
+- **`v4l2-ctrls.py`**: Main service entry point
+
+### JSON-RPC Methods
+
+The service exposes four methods:
+
+#### `list`
+Get all available controls with metadata.
+
+**Parameters:** None
+
+**Returns:**
+```json
+{
+  "controls": [
+    {
+      "name": "brightness",
+      "type": "int",
+      "min": 0,
+      "max": 255,
+      "step": 1,
+      "value": 128,
+      "menu": []
+    }
+  ]
+}
+```
+
+#### `get`
+Read current control values.
+
+**Parameters:**
+```json
+{
+  "controls": ["brightness", "contrast"]
+}
+```
+
+**Returns:**
+```json
+{
+  "values": {
+    "brightness": 128,
+    "contrast": 100
+  }
+}
+```
+
+#### `set`
+Change control values and persist them.
+
+**Parameters:**
+```json
+{
+  "controls": {
+    "brightness": 150,
+    "contrast": 110
+  }
+}
+```
+
+**Returns:**
+```json
+{
+  "ok": true,
+  "applied": {
+    "brightness": 150,
+    "contrast": 110
+  }
+}
+```
+
+#### `info`
+Get device information.
+
+**Parameters:** None
+
+**Returns:**
+```json
+{
+  "info": "Driver Info: ..."
+}
+```
 
 ## Requirements
 
-- Python 3
-- Flask (`pip install flask`)
-- `v4l2-ctl` available in `PATH`
+- Python 3.7+
+- `v4l2-ctl` in PATH
+- Unix socket support
 
 ## Usage
 
-**Single camera (auto-detect):**
-```sh
-python3 v4l2-ctrls.py
+### Start the Service
+
+```bash
+# For a specific device
+./v4l2-ctrls.py --device /dev/video11 --socket /tmp/v4l2-ctrls.sock
+
+# Auto-detect device (uses first available, prefers /dev/v4l-subdev2)
+./v4l2-ctrls.py --socket /tmp/v4l2-ctrls.sock
+
+# Custom state file location
+./v4l2-ctrls.py --device /dev/video11 --socket /tmp/v4l2.sock --state /tmp/v4l2-state.json
+
+# Don't restore saved settings on startup
+./v4l2-ctrls.py --device /dev/video11 --socket /tmp/v4l2.sock --no-restore
 ```
 
-**Specify devices:**
-```sh
-python3 v4l2-ctrls.py --device /dev/video11
+### Integration with stream-http
+
+The `stream-http` component serves the camera controls UI and forwards JSON-RPC requests:
+
+```bash
+# Start v4l2-ctrls service
+./v4l2-ctrls.py --device /dev/video11 --socket /tmp/v4l2-ctrls.sock &
+
+# Start stream-http with control integration
+./stream-http/main.py \
+  --port 8080 \
+  --jpeg-sock /tmp/snap.sock \
+  --mjpeg-sock /tmp/mjpeg.sock \
+  --h264-sock /tmp/h264.sock \
+  --webrtc-sock /tmp/webrtc.sock \
+  --control-sock /tmp/v4l2-ctrls.sock
 ```
 
-**Multiple cameras with custom configuration:**
-```sh
-python3 v4l2-ctrls.py \
-  --device /dev/video11 \
-  --device /dev/video12 \
-  --port 5001 \
-  --camera-url http://192.168.1.100/ \
-  --app-base-url /camera-controls/ \
-  --title "My Camera System"
+Access the controls UI at: `http://localhost:8080/control/`
+
+## Persistence
+
+Control values are automatically saved when changed via the `set` method. On startup, the service restores previously saved values.
+
+**Default state file location:**
+```
+$XDG_STATE_HOME/v4l2-ctrls/<device>.json
+~/.local/state/v4l2-ctrls/<device>.json  (if XDG_STATE_HOME not set)
 ```
 
-**Custom stream endpoints:**
-```sh
-python3 v4l2-ctrls.py \
-  --device /dev/video12 \
-  --stream-prefix /dev/video12=/webcam2/ \
-  --stream-path-webrtc "{prefix}webrtc" \
-  --stream-path-mjpg "{prefix}stream.mjpg" \
-  --stream-path-snapshot "{prefix}snapshot.jpg"
+**Example state file:**
+```json
+{
+  "brightness": 128,
+  "contrast": 100,
+  "saturation": 128,
+  "sharpness": 3
+}
 ```
 
-**Non-standard stream backend:**
-```sh
-python3 v4l2-ctrls.py \
-  --device /dev/video0 \
-  --stream-prefix /dev/video0=/camera/ \
-  --stream-path-webrtc "{prefix}live.webrtc" \
-  --stream-path-mjpg "{prefix}feed.mjpeg" \
-  --stream-path-snapshot "{prefix}snap.png"
+## JSON-RPC Client Example
+
+```python
+from jsonrpc_server import JSONRPCClient
+
+client = JSONRPCClient('/tmp/v4l2-ctrls.sock')
+
+# List all controls
+controls = client.call('list')
+print(controls['controls'])
+
+# Get specific control values
+values = client.call('get', {'controls': ['brightness', 'contrast']})
+print(values['values'])
+
+# Set control values
+result = client.call('set', {
+    'controls': {
+        'brightness': 150,
+        'contrast': 110
+    }
+})
+print(result['applied'])
+
+# Get device info
+info = client.call('info')
+print(info['info'])
 ```
 
-## Command-line Options
+## Migration from Old Flask-Based Version
 
-- `--device <path>` - V4L2 device path (can be specified multiple times; auto-detects if omitted)
-- `--host <address>` - Host to bind (default: `0.0.0.0`)
-- `--port <number>` - Port to bind (default: `5000`)
-- `--camera-url <url>` - Base URL for camera streams (default: `http://127.0.0.1/`)
-- `--app-base-url <path>` - Base URL path for UI routing when behind a reverse proxy (optional)
-- `--title <text>` - Custom page title (optional)
-- `--stream-prefix <key=path>` - Override stream prefix per camera (key can be device path, basename, or cam id)
-- `--stream-path-webrtc <template>` - Template for WebRTC stream path (default: `{prefix}webrtc`)
-- `--stream-path-mjpg <template>` - Template for MJPG stream path (default: `{prefix}stream.mjpg`)
-- `--stream-path-snapshot <template>` - Template for snapshot stream path (default: `{prefix}snapshot.jpg`)
+### What Changed
 
-## URL Template Variables
+1. **Removed Flask web server** - Now JSON-RPC over Unix socket only
+2. **Single device focus** - Uses `--device` parameter or auto-detects one device
+3. **Backend persistence** - Values saved automatically, no frontend localStorage
+4. **No multi-camera support** - Run multiple instances for multiple devices
+5. **Web UI moved to stream-http** - Access via `/control/` on stream-http
 
-The `--camera-url` option supports template variables for flexible stream routing:
-
-- `{path}` - Full path including camera prefix and mode (e.g., `/webcam/stream.mjpg`)
-- `{prefix}` - Camera prefix only (e.g., `/webcam/`)
-- `{mode}` - Preview mode (e.g., `webrtc`, `mjpg`, `snapshot`)
-- `{cam}` - Camera id (e.g., `video12`)
-- `{device}` - Device path (e.g., `/dev/video12`)
-- `{index}` - Camera index in the list (1-based)
-- `{basename}` - Device basename (e.g., `video12`)
-
-**Examples:**
-```sh
-# Simple append mode (default behavior)
---camera-url http://192.168.1.100/
-
-# Path substitution
---camera-url http://192.168.1.100/streams/{path}
-
-# Custom routing with prefix and mode
---camera-url http://192.168.1.100/{prefix}{mode}
+### Old Command
+```bash
+python3 v4l2-ctrls.py --device /dev/video11 --device /dev/video12 --port 5001
 ```
 
-## Stream Path Templates
+### New Command
+```bash
+# Device 1
+./v4l2-ctrls.py --device /dev/video11 --socket /tmp/v4l2-dev1.sock &
 
-The stream path options (`--stream-path-webrtc`, `--stream-path-mjpg`, `--stream-path-snapshot`) support the same
-template variables as above, plus `{basename}` for the device basename (e.g., `video12`).
+# Device 2
+./v4l2-ctrls.py --device /dev/video12 --socket /tmp/v4l2-dev2.sock &
 
-## API Endpoints
-
-- `GET /` - Main UI page
-- `GET /api/cams` - List cameras and streamer configuration
-- `GET /api/v4l2/ctrls?cam=<cam_id>` - Get available controls for device
-- `POST /api/v4l2/set?cam=<cam_id>` - Apply control value changes (JSON body: `{"control_name": value}`)
-- `GET /api/v4l2/info?cam=<cam_id>` - Get device information
-
-## Reverse Proxy Configuration
-
-When running behind a reverse proxy (e.g., nginx), use `--app-base-url` to set the base path:
-```sh
-python3 v4l2-ctrls.py --app-base-url /v4l2/
+# stream-http (serves unified UI)
+./stream-http/main.py --control-sock /tmp/v4l2-dev1.sock ...
 ```
 
-Then configure your proxy to forward `/v4l2/` to the Flask app.
+## Design Principles
 
-## Integration
-
-Integrated into the v4l2-mpp firmware build system. Installed to `/usr/local/bin/v4l2-ctrls.py` during firmware compilation.
-
-## Notes
-
-- Control changes are applied immediately but **not persisted** across reboots
-- Persistence is handled by the camera streamer/service layer
-- Camera auto-detection prefers `/dev/v4l-subdev2` if available
-- Up to 8 devices are auto-detected by default
+1. **Separation of concerns**: Control logic separate from web presentation
+2. **Single responsibility**: One device per service instance
+3. **Persistence**: Settings survive restarts
+4. **Clean interfaces**: JSON-RPC for machine-to-machine communication
+5. **No circular dependencies**: Unidirectional data flow
