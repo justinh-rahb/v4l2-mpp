@@ -127,5 +127,6 @@ Integrated into the v4l2-mpp firmware build system. Installed to `/usr/local/bin
 
 - Control changes are applied immediately but **not persisted** across reboots
 - Persistence is handled by the camera streamer/service layer
+- Auto/manual mode controls (for example, exposure or white balance auto toggles) are applied before dependent values
 - Camera auto-detection prefers `/dev/v4l-subdev2` if available
 - Up to 8 devices are auto-detected by default

@@ -43,6 +43,13 @@ CONTROL_ORDER = [
     "gain",
 ]
 
+AUTO_CONTROL_ALLOWLIST = {
+    "exposure_auto",
+    "white_balance_temperature_auto",
+    "focus_auto",
+    "focus_automatic_continuous",
+}
+
 HTML_PAGE = """<!doctype html>
 <html lang=\"en\">
 <head>
@@ -759,6 +766,38 @@ def run_v4l2(args: List[str], timeout: float = 3.0) -> Tuple[int, str, str]:
         return 124, "", f"Timeout running {' '.join(args)}: {exc}"
 
 
+def split_controls_by_precedence(
+    values: Dict[str, int],
+) -> Tuple[Dict[str, int], Dict[str, int]]:
+    auto_first = {key: value for key, value in values.items() if key in AUTO_CONTROL_ALLOWLIST}
+    rest = {key: value for key, value in values.items() if key not in AUTO_CONTROL_ALLOWLIST}
+    return auto_first, rest
+
+
+def apply_controls(device: str, values: Dict[str, int]) -> Tuple[bool, str, str, int]:
+    if not values:
+        return True, "", "", 0
+    set_parts = [f"{key}={value}" for key, value in values.items()]
+    cmd = ["v4l2-ctl", "-d", device, f"--set-ctrl={','.join(set_parts)}"]
+    code, out, err = run_v4l2(cmd)
+    return code == 0, out, err, code
+
+
+def restore_state(device: str, values: Dict[str, int]) -> Tuple[bool, str, str, int]:
+    auto_first, rest = split_controls_by_precedence(values)
+    stdout_parts: List[str] = []
+    stderr_parts: List[str] = []
+    for batch in (auto_first, rest):
+        if not batch:
+            continue
+        ok, out, err, code = apply_controls(device, batch)
+        stdout_parts.append(out)
+        stderr_parts.append(err)
+        if not ok:
+            return False, out, err, code
+    return True, "\n".join(filter(None, stdout_parts)), "\n".join(filter(None, stderr_parts)), 0
+
+
 def detect_devices(limit: int = 8) -> List[str]:
     devices: List[str] = []
     code, out, err = run_v4l2(["v4l2-ctl", "--list-devices"], timeout=2.0)
@@ -980,7 +1019,6 @@ def api_set():
     allowlist = {ctrl["name"] for ctrl in controls}
     control_map = {ctrl["name"]: ctrl for ctrl in controls}
     applied: Dict[str, int] = {}
-    set_parts = []
     for key, value in data.items():
         if key not in allowlist:
             return jsonify({"error": f"Unknown control: {key}"}), 400
@@ -1003,13 +1041,25 @@ def api_set():
                         400,
                     )
         applied[key] = value
-        set_parts.append(f"{key}={value}")
-    if not set_parts:
+    if not applied:
         return jsonify({"error": "No controls provided"}), 400
-    cmd = ["v4l2-ctl", "-d", cam.device, f"--set-ctrl={','.join(set_parts)}"]
-    code2, out2, err2 = run_v4l2(cmd)
-    ok = code2 == 0
-    return jsonify({"ok": ok, "applied": applied, "stdout": out2, "stderr": err2, "code": code2}), (200 if ok else 500)
+    auto_first, rest = split_controls_by_precedence(applied)
+    stdout_parts: List[str] = []
+    stderr_parts: List[str] = []
+    for batch in (auto_first, rest):
+        if not batch:
+            continue
+        ok, out2, err2, code2 = apply_controls(cam.device, batch)
+        stdout_parts.append(out2)
+        stderr_parts.append(err2)
+        if not ok:
+            return (
+                jsonify({"ok": False, "applied": applied, "stdout": out2, "stderr": err2, "code": code2}),
+                500,
+            )
+    stdout = "\n".join(filter(None, stdout_parts))
+    stderr = "\n".join(filter(None, stderr_parts))
+    return jsonify({"ok": True, "applied": applied, "stdout": stdout, "stderr": stderr, "code": 0}), 200
 
 
 @APP.route("/api/v4l2/info")
