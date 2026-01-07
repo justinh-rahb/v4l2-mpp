@@ -31,6 +31,13 @@ CONTROL_ORDER = [
     "gain",
 ]
 
+AUTO_FIRST_CONTROLS = {
+    "exposure_auto",
+    "white_balance_temperature_auto",
+    "focus_auto",
+    "focus_automatic_continuous",
+}
+
 
 def log(msg: str) -> None:
     ts = time.strftime("%H:%M:%S")
@@ -204,6 +211,12 @@ def apply_controls(device: str, values: Dict[str, int]) -> Tuple[bool, str, str,
     return code == 0, out, err, code
 
 
+def split_controls_by_precedence(values: Dict[str, int]) -> Tuple[Dict[str, int], Dict[str, int]]:
+    auto_first = {key: value for key, value in values.items() if key in AUTO_FIRST_CONTROLS}
+    remaining = {key: value for key, value in values.items() if key not in AUTO_FIRST_CONTROLS}
+    return auto_first, remaining
+
+
 def read_device_info(device: str) -> str:
     code, out, err = run_v4l2(["v4l2-ctl", "-d", device, "-D"])
     if code != 0:
@@ -253,7 +266,12 @@ def restore_state(device: str, path: Path) -> None:
     if not validated:
         log("No valid persisted controls to apply")
         return
-    ok, out, err, code = apply_controls(device, validated)
+    auto_first, remaining = split_controls_by_precedence(validated)
+    ok, out, err, code = apply_controls(device, auto_first)
+    if not ok:
+        log(f"Failed to restore auto controls: code={code}, err={err or out}")
+        return
+    ok, out, err, code = apply_controls(device, remaining)
     if ok:
         log(f"Restored {len(validated)} controls from {path}")
     else:
@@ -298,7 +316,11 @@ def handle_rpc(device: str, state_path: Path, request: Dict) -> Optional[Dict]:
             raise JsonRpcError(-32602, "params.controls must be an object")
         controls = fetch_controls(device)
         validated = validate_values(params["controls"], controls)
-        ok, out, err, code = apply_controls(device, validated)
+        auto_first, remaining = split_controls_by_precedence(validated)
+        ok, out, err, code = apply_controls(device, auto_first)
+        if not ok:
+            raise JsonRpcError(-32000, err or out or f"Failed to set auto controls (code {code})")
+        ok, out, err, code = apply_controls(device, remaining)
         if not ok:
             raise JsonRpcError(-32000, err or out or f"Failed to set controls (code {code})")
         persisted = load_state(state_path)

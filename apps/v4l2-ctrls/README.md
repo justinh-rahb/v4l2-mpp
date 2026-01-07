@@ -70,3 +70,4 @@ Pair `v4l2-ctrls` with `stream-http` by passing `--control-sock` to the HTTP ser
 
 - Persisted controls are restored on startup after validating against the current device controls.
 - The default persistence location is `$XDG_STATE_HOME/v4l2-ctrls/<device>.json` (or `~/.local/state/v4l2-ctrls/` if unset).
+- Auto/manual mode controls (exposure/focus/white-balance) are applied before dependent controls to avoid precedence issues.
