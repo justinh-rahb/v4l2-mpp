@@ -9,13 +9,15 @@ all: $(TARGET)
 clean:
 	rm -f $(TARGET)
 
-$(TARGET): main.py html_index.py html_player.py html_webrtc.py
+$(TARGET): main.py html_index.py html_player.py html_webrtc.py html_control.py
 	sed -e '/^from html_index import/r html_index.py' \
 	    -e '/^from html_index import/d' \
 	    -e '/^from html_player import/r html_player.py' \
 	    -e '/^from html_player import/d' \
 	    -e '/^from html_webrtc import/r html_webrtc.py' \
 	    -e '/^from html_webrtc import/d' \
+	    -e '/^from html_control import/r html_control.py' \
+	    -e '/^from html_control import/d' \
 	    main.py > $(TARGET).tmp
 	chmod +x $@.tmp
 	mv $(TARGET).tmp $@
