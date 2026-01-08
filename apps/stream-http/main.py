@@ -10,6 +10,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from html_index import HTML_INDEX
 from html_player import HTML_PLAYER
 from html_webrtc import HTML_WEBRTC
+from html_control import HTML_CONTROL
 
 def log(msg):
     ts = time.strftime('%H:%M:%S')
@@ -94,8 +95,10 @@ class CameraHandler(BaseHTTPRequestHandler):
             self.send_response(302)
             self.send_header('Location', '/control/')
             self.end_headers()
-        elif path.startswith('/control/'):
-            self.handle_control()
+        elif path == '/control/' or path == '/control/index.html':
+            self.handle_control_index()
+        elif path == '/control/rpc':
+            self.send_error(405, 'Method Not Allowed')
         elif path == '/':
             self.handle_index()
         else:
@@ -107,8 +110,8 @@ class CameraHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == '/webrtc':
             self.handle_webrtc_offer()
-        elif path.startswith('/control'):
-            self.handle_control()
+        elif path == '/control/rpc':
+            self.handle_control_rpc()
         else:
             self.send_error(404, 'Not Found')
         log(f"POST done: {self.path}")
@@ -129,42 +132,29 @@ class CameraHandler(BaseHTTPRequestHandler):
     def handle_index(self):
         self.send_html(HTML_INDEX)
 
-    def handle_control(self):
+    def handle_control_index(self):
         if not self.control_sock:
             self.send_error(503, 'Control interface not available')
             return
-        
+        self.send_html(HTML_CONTROL)
+
+    def handle_control_rpc(self):
+        if not self.control_sock:
+            self.send_error(503, 'Control interface not available')
+            return
+
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length <= 0:
+            self.send_error(400, 'Missing JSON-RPC payload')
+            return
         try:
-            parsed = urlparse(self.path)
-            path = parsed.path
-            
-            # Strip /control prefix for the Flask app
-            if path.startswith('/control'):
-                path = path[8:]  # len('/control') = 8
-            if not path:
-                path = '/'
-            
-            query = {}
-            if parsed.query:
-                from urllib.parse import parse_qs
-                query_dict = parse_qs(parsed.query)
-                query = {k: v[0] for k, v in query_dict.items()}
-            
-            request_data = {
-                "method": self.command,
-                "path": path,
-                "query": query
-            }
-            
-            if self.command == "POST":
-                content_length = int(self.headers.get('Content-Length', 0))
-                if content_length > 0:
-                    request_body = self.rfile.read(content_length).decode()
-                    try:
-                        request_data["body"] = json.loads(request_body)
-                    except:
-                        request_data["body"] = request_body
-            
+            request_body = self.rfile.read(content_length).decode()
+            request_data = json.loads(request_body)
+        except json.JSONDecodeError:
+            self.send_error(400, 'Invalid JSON')
+            return
+
+        try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(5.0)
             try:
@@ -180,33 +170,17 @@ class CameraHandler(BaseHTTPRequestHandler):
                     if b'\n' in response:
                         break
                 result = json.loads(response.decode().strip())
-                log(f"Control socket response: status={result.get('status')}, body_len={len(str(result.get('body', '')))}")
-                
-                status = result.get("status", 200)
-                headers = result.get("headers", {})
-                body = result.get("body", "")
-                
-                # Convert body to bytes
-                if isinstance(body, dict) or isinstance(body, list):
-                    body_bytes = json.dumps(body).encode()
-                    if 'Content-Type' not in headers:
-                        headers['Content-Type'] = 'application/json'
-                elif isinstance(body, str):
-                    body_bytes = body.encode()
-                else:
-                    body_bytes = body
-                
-                # Send response
-                self.send_response(status)
-                headers['Content-Length'] = str(len(body_bytes))
-                for key, value in headers.items():
-                    self.send_header(key, value)
-                self.end_headers()
-                self.wfile.write(body_bytes)
+                body_bytes = json.dumps(result).encode()
             finally:
                 sock.close()
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body_bytes)))
+            self.end_headers()
+            self.wfile.write(body_bytes)
         except Exception as e:
-            log(f"Control request error: {e}")
+            log(f"Control RPC error: {e}")
             self.send_error(500, f'Internal error: {e}')
 
     def handle_snapshot(self):
