@@ -31,7 +31,7 @@ python3 control-v4l2.py \
 ## Command-line Options
 
 - `--device <path>` - V4L2 device path (required)
-- `--socket <path>` - Unix socket path to expose JSON-RPC (required)
+- `--sock <path>` - Unix socket path to expose JSON-RPC (required)
 - `--state-file <path>` - Optional path to persist control state
 
 ## JSON-RPC API

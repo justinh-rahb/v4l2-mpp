@@ -123,36 +123,6 @@ class CameraHandler(SimpleHTTPRequestHandler):
             self.send_error(404, 'Not Found')
         log(f"POST done: {self.path}")
 
-    def handle_control(self):
-        try:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(5.0)
-            try:
-                sock.connect(self.control_sock)
-                data = json.dumps(request_data) + '\n'
-                sock.sendall(data.encode())
-                response = b''
-                while True:
-                    chunk = sock.recv(65536)
-                    if not chunk:
-                        break
-                    response += chunk
-                    if b'\n' in response:
-                        break
-                result = json.loads(response.decode().strip())
-                body_bytes = json.dumps(result).encode()
-            finally:
-                sock.close()
-
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body_bytes)))
-            self.end_headers()
-            self.wfile.write(body_bytes)
-        except Exception as e:
-            log(f"Control RPC error: {e}")
-            self.send_error(500, f'Internal error: {e}')
-
     def handle_snapshot(self):
         if not self.jpeg_sock:
             self.send_error(503, 'Snapshot not available')
