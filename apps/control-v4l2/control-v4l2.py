@@ -3,13 +3,12 @@
 Standalone V4L2 controls JSON-RPC service.
 
 Usage example:
-  python3 apps/control-v4l2/control-v4l2.py --device /dev/video11 --socket /tmp/control-v4l2.sock
+  python3 apps/control-v4l2/control-v4l2.py --device /dev/video11 --sock /tmp/control-v4l2.sock
 """
 
 import argparse
 import json
 import os
-import selectors
 import socket
 import subprocess
 import time
