@@ -11,7 +11,8 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 ALLOWED_PATHS = {
     '/': 'index.html',
     '/player': 'player.html',
-    '/webrtc': 'webrtc.html'
+    '/webrtc': 'webrtc.html',
+    '/control': 'control.html'
 }
 
 def log(msg):
@@ -50,7 +51,7 @@ def read_jpeg_frames(sock_path, chunk_size=65536):
             yield buf[start:end + 2]
             buf = buf[end + 2:]
 
-def webrtc_request(sock_path, request):
+def socket_req_and_resp(sock_path, request):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(5.0)
     try:
@@ -74,6 +75,7 @@ class CameraHandler(SimpleHTTPRequestHandler):
     mjpeg_sock = None
     h264_sock = None
     webrtc_sock = None
+    control_sock = None
     html_dir = None
 
     def log_message(self, format, *args):
@@ -95,8 +97,12 @@ class CameraHandler(SimpleHTTPRequestHandler):
             self.handle_mjpeg_stream()
         elif path == '/stream.h264':
             self.handle_h264_stream()
+        elif path == '/control' and not self.control_sock:
+            self.send_error(503, 'Control not available')
         elif path == '/webrtc' and not self.webrtc_sock:
-            self.send_error(503, 'WebRTC not available')
+            self.send_response(302)
+            self.send_header('Location', 'player')
+            self.end_headers()
         elif path not in ALLOWED_PATHS:
             self.send_error(404, "File not found")
         else:
@@ -110,7 +116,11 @@ class CameraHandler(SimpleHTTPRequestHandler):
         if path == '/webrtc' and not self.webrtc_sock:
             self.send_error(503, 'WebRTC not available')
         elif path == '/webrtc':
-            self.handle_webrtc_offer()
+            self.handle_socket_req_and_resp(self.webrtc_sock)
+        elif path == '/control' and not self.control_sock:
+            self.send_error(503, 'Control not available')
+        elif path == '/control':
+            self.handle_socket_req_and_resp(self.control_sock)
         else:
             self.send_error(404, 'Not Found')
         log(f"POST done: {self.path}")
@@ -193,17 +203,15 @@ class CameraHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def handle_webrtc_offer(self):
+    def handle_socket_req_and_resp(self, socket_path):
         try:
-            if not self.webrtc_sock:
-                raise Exception('WebRTC not available')
             content_length = int(self.headers.get('Content-Length', 0))
             request_body = self.rfile.read(content_length).decode()
             request = json.loads(request_body)
-            response = webrtc_request(self.webrtc_sock, request)
+            response = socket_req_and_resp(socket_path, request)
             self.send_json_response(200, response)
         except Exception as e:
-            log(f"WebRTC offer error: {e}")
+            log(f"Socket Request and Response: {e}")
             self.send_json_response(500, {'error': str(e)})
 
 def main():
@@ -224,6 +232,7 @@ def main():
     parser.add_argument('--mjpeg-sock', required=True, help='MJPEG stream socket')
     parser.add_argument('--h264-sock', required=True, help='H264 stream socket')
     parser.add_argument('--webrtc-sock', help='WebRTC signaling socket')
+    parser.add_argument('--control-sock', help='V4L2 control interface socket')
     args = parser.parse_args()
 
     CameraHandler.html_dir = args.html_dir
@@ -231,6 +240,7 @@ def main():
     CameraHandler.mjpeg_sock = args.mjpeg_sock
     CameraHandler.h264_sock = args.h264_sock
     CameraHandler.webrtc_sock = args.webrtc_sock
+    CameraHandler.control_sock = args.control_sock
 
     server = ThreadingHTTPServer((args.bind, args.port), CameraHandler)
     log(f"Server running on http://{args.bind}:{args.port}")
@@ -243,6 +253,9 @@ def main():
     if args.webrtc_sock:
         log(f"  /webrtc        - WebRTC player")
         log(f"  POST /webrtc   - WebRTC offer")
+    if args.control_sock:
+        log(f"  /control       - Control interface")
+        log(f"  POST /control  - Set controls")
 
     try:
         server.serve_forever()
